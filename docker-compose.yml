@@ -1,0 +1,24 @@
+services:
+  cloudflare-speedtest-ddns:
+    build: .
+    container_name: cloudflare-speedtest-ddns
+    environment:
+      # CloudflareSpeedTest 版本（可选，默认 v2.3.4）
+      - CLOUDFLARE_ST_VERSION=v2.3.4
+      
+      # Cloudflare API 参数（从 .env 文件读取）
+      - host_name=${host_name}
+      - host_ip_max=${host_ip_max:-2}
+      - zone_id=${zone_id}
+      - api_token=${api_token}
+      
+      # CloudflareSpeedTest 测试参数（从 .env 读取）
+      - speedtest_para=${speedtest_para}
+      
+      # Linux 定时任务 (Cron格式)
+      # 示例: "0 * * * *" 表示每小时执行一次
+      # 示例: "*/30 * * * *" 表示每30分钟执行一次
+      # 测试时使用 "* * * * *" 每分钟执行一次，方便观察
+      - cron=${cron:-0 * * * *}
+    
+    restart: unless-stopped

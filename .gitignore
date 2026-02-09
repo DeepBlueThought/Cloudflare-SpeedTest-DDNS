@@ -1,0 +1,62 @@
+# Logs
+*.log
+*.csv
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Docker
+*.tar.gz
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Test results
+result.csv
+baseline_ip.txt
+baseline_result.csv
+
+# Environment variables (contains sensitive data)
+.env
+.env.local
+.env.*.local
+
+# Node modules (if any)
+node_modules/
+
+# Python (if any)
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+
+# Build artifacts
+dist/
+build/
+
+# IP list temporary files
+ip.txt.bak
+ip.txt.tmp
+
+# private
+UPGRADE.md
+GIT.md
+BUILD.md
+GITHUB_ACTIONS.md
+IP_UPDATE.md
+IP_UPDATE_STRATEGY.md
+LOGGING.md
+DOCKERHUB_SETUP.md
