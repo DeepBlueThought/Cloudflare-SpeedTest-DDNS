@@ -221,7 +221,7 @@ services:
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `CLOUDFLARE_ST_VERSION` | No | v2.3.4 | CloudflareSpeedTest version (fallback on failure) |
-| `host_name` | Yes | - | Domain name to update |
+| `host_name` | Yes | - | Domain name to update. Supports multiple domain names separated by commas or spaces (e.g., `cf1.example.com,cf2.example.com`). |
 | `host_ip_max` | No | 2 | Maximum IPs to add to DNS (default 2 for load balancing + failover) |
 | `zone_id` | Yes | - | Cloudflare Zone ID, obtain from Cloudflare dashboard |
 | `api_token` | Yes | - | Cloudflare API Token, obtain from Cloudflare dashboard |

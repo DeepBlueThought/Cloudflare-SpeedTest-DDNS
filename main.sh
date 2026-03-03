@@ -71,31 +71,38 @@ fi
 chmod +x "$CloudflareST" 2>/dev/null || true
 
 # 4. Test existing DNS records and build IP pool
-response=$(curl "${curl_args[@]}" -X GET "$base_url/dns_records?name=$host_name&type=A" "${base_header[@]}")
-declare -A old_ip_to_id  # IP -> DNS Record ID 映射
-declare -A ip_metrics    # IP -> "latency,speed" 指标
+IFS=', ' read -r -a host_names <<< "$host_name"
+[[ ${#host_names[@]} -eq 0 ]] && { log_msg "ERROR" "host_name is empty"; exit 1; }
 
-# 提取现有记录
-while IFS= read -r line; do
-  ip=$(echo "$line" | jq -r '.content')
-  id=$(echo "$line" | jq -r '.id')
-  old_ip_to_id["$ip"]=$id
-done < <(echo "$response" | jq -c '.result[]')
+declare -A old_records   # "hostname:ip" -> DNS Record ID
+declare -A ip_metrics    # IP -> "latency,speed" 指标
+declare -A unique_ips    # Unique IPs across all hostnames for testing
+
+for h in "${host_names[@]}"; do
+  log_msg "INFO" "Fetching existing DNS records for $h..."
+  response=$(curl "${curl_args[@]}" -X GET "$base_url/dns_records?name=$h&type=A" "${base_header[@]}")
+  while IFS= read -r line; do
+    ip=$(echo "$line" | jq -r '.content')
+    id=$(echo "$line" | jq -r '.id')
+    old_records["$h:$ip"]=$id
+    unique_ips["$ip"]=1
+  done < <(echo "$response" | jq -c '.result[]')
+done
 
 # 测速URL
 test_url=$(echo "$speedtest_para" | grep -oE "\-url [^ ]+" | awk '{print $2}')
 [[ -z "$test_url" ]] && test_url="https://download.parallels.com/desktop/v18/18.1.1-53328/ParallelsDesktop-18.1.1-53328.dmg"
 
 # 测试现有IP
-if [[ ${#old_ip_to_id[@]} -gt 0 ]]; then
-  print "Testing ${#old_ip_to_id[@]} existing DNS record(s)..."
+if [[ ${#unique_ips[@]} -gt 0 ]]; then
+  print "Testing ${#unique_ips[@]} unique existing DNS record(s)..."
   
   rm -f baseline_ips.txt
-  for ip in "${!old_ip_to_id[@]}"; do
+  for ip in "${!unique_ips[@]}"; do
     echo "$ip" >> baseline_ips.txt
   done
   
-  $CloudflareST -f baseline_ips.txt -n 100 -dn ${#old_ip_to_id[@]} -url "$test_url" -dt 5 -o baseline_result.csv > /dev/null 2>&1
+  $CloudflareST -f baseline_ips.txt -n 100 -dn ${#unique_ips[@]} -url "$test_url" -dt 5 -o baseline_result.csv > /dev/null 2>&1
   
   if [[ -f baseline_result.csv ]]; then
     while IFS=, read -r ip sent recv loss lat spd colo; do
@@ -211,8 +218,13 @@ for i in "${!target_ips[@]}"; do
   lat=$(echo "$metrics" | cut -d',' -f1)
   spd=$(echo "$metrics" | cut -d',' -f2)
   
-  # 判断是新IP还是保留的旧IP
-  if [[ -n "${old_ip_to_id[$ip]}" ]]; then
+  # 判断是新IP还是保留的旧IP（只要在任一域名中存在即视为 KEEP）
+  is_old=false
+  for h in "${host_names[@]}"; do
+    [[ -n "${old_records["$h:$ip"]}" ]] && is_old=true && break
+  done
+
+  if [[ "$is_old" == true ]]; then
     log_msg "INFO" "  #$((i+1)): $ip (${lat}ms / ${spd}MB/s) [KEEP]"
   else
     log_msg "INFO" "  #$((i+1)): $ip (${lat}ms / ${spd}MB/s) [NEW]"
@@ -220,47 +232,57 @@ for i in "${!target_ips[@]}"; do
 done
 
 # 8. 更新DNS记录（先添加新的，再删除多余的）
-print "Updating DNS records..."
-declare -A target_ip_to_new_id
+print "Updating DNS records for ${#host_names[@]} host(s)..."
 
-# 添加目标IP（如果不存在）
-for ip in "${target_ips[@]}"; do
-  if [[ -z "${old_ip_to_id[$ip]}" ]]; then
-    # 这是新IP，需要添加
-    data="{\"type\":\"A\",\"name\":\"$host_name\",\"content\":\"$ip\",\"ttl\":1,\"proxied\":false}"
-    response=$(curl "${curl_args[@]}" -X POST "$base_url/dns_records" "${base_header[@]}" -d "$data")
-    
-    if echo "$response" | jq -e '.success' > /dev/null; then
-      new_id=$(echo "$response" | jq -r '.result.id')
-      target_ip_to_new_id["$ip"]=$new_id
-      log_msg "SUCCESS" "Added DNS record: $ip (ID: $new_id)"
-    else
-      error_msg=$(echo "$response" | jq -r '.errors[0].message // "Unknown error"')
-      log_msg "ERROR" "Failed to add $ip: $error_msg"
-    fi
-  else
-    # 旧IP保留
-    target_ip_to_new_id["$ip"]="${old_ip_to_id[$ip]}"
-    log_msg "INFO" "Keeping existing record: $ip (ID: ${old_ip_to_id[$ip]})"
-  fi
-done
-
-# 删除不在目标列表中的旧IP
-for ip in "${!old_ip_to_id[@]}"; do
-  # 检查是否在目标列表中
-  in_target=false
-  for target_ip in "${target_ips[@]}"; do
-    [[ "$ip" == "$target_ip" ]] && in_target=true && break
-  done
+for h in "${host_names[@]}"; do
+  log_msg "INFO" "Updating DNS records for $h..."
   
-  if [[ "$in_target" == false ]]; then
-    old_id="${old_ip_to_id[$ip]}"
-    if curl "${curl_args[@]}" -X DELETE "$base_url/dns_records/$old_id" "${base_header[@]}" | jq -e '.success' > /dev/null 2>&1; then
-      log_msg "INFO" "Removed obsolete record: $ip (ID: $old_id)"
+  # 添加目标IP（如果不存在）
+  for ip in "${target_ips[@]}"; do
+    if [[ -z "${old_records["$h:$ip"]}" ]]; then
+      # 这是新IP，需要添加
+      data="{\"type\":\"A\",\"name\":\"$h\",\"content\":\"$ip\",\"ttl\":1,\"proxied\":false}"
+      response=$(curl "${curl_args[@]}" -X POST "$base_url/dns_records" "${base_header[@]}" -d "$data")
+      
+      if echo "$response" | jq -e '.success' > /dev/null; then
+        new_id=$(echo "$response" | jq -r '.result.id')
+        old_records["$h:$ip"]=$new_id  # 防止重复添加
+        log_msg "SUCCESS" "[$h] Added DNS record: $ip (ID: $new_id)"
+      else
+        error_msg=$(echo "$response" | jq -r '.errors[0].message // "Unknown error"')
+        log_msg "ERROR" "[$h] Failed to add $ip: $error_msg"
+      fi
     else
-      log_msg "WARN" "Failed to remove: $ip (ID: $old_id)"
+      # 旧IP保留
+      log_msg "INFO" "[$h] Keeping existing record: $ip (ID: ${old_records["$h:$ip"]})"
     fi
-  fi
+  done
+
+  # 删除不在目标列表中的旧IP
+  for key in "${!old_records[@]}"; do
+    # 提取域名和IP
+    cur_h="${key%%:*}"
+    cur_ip="${key#*:}"
+    
+    # 只处理当前域名
+    [[ "$cur_h" != "$h" ]] && continue
+    
+    # 检查是否在目标列表中
+    in_target=false
+    for target_ip in "${target_ips[@]}"; do
+      [[ "$cur_ip" == "$target_ip" ]] && in_target=true && break
+    done
+    
+    if [[ "$in_target" == false ]]; then
+      old_id="${old_records[$key]}"
+      if curl "${curl_args[@]}" -X DELETE "$base_url/dns_records/$old_id" "${base_header[@]}" | jq -e '.success' > /dev/null 2>&1; then
+        log_msg "INFO" "[$h] Removed obsolete record: $cur_ip (ID: $old_id)"
+        unset old_records["$key"]
+      else
+        log_msg "WARN" "[$h] Failed to remove: $cur_ip (ID: $old_id)"
+      fi
+    fi
+  done
 done
 
 log_msg "SUCCESS" "DNS update completed"

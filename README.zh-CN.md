@@ -220,9 +220,9 @@ services:
 ## 📋 环境变量说明
 
 | 变量名 | 必填 | 默认值 | 说明 |
-|--------|------|--------|------|
+|--------|--------------|------|
 | `CLOUDFLARE_ST_VERSION` | 否 | v2.3.4 | CloudflareSpeedTest 版本号（下载失败会fallback） |
-| `host_name` | 是 | - | 要更新的域名 |
+| `host_name` | 是 | - | 需要更新的域名（支持多个，用逗号或空格分隔，如 `cf1.a.com,cf2.a.com`） |
 | `host_ip_max` | 否 | 2 | 最多添加几个 IP 到 DNS（默认2个可以实现负载均衡 + 容错） |
 | `zone_id` | 是 | - | Cloudflare Zone ID，自行从 Cloudflare 管理面板获取 |
 | `api_token` | 是 | - | Cloudflare API Token，自行从 Cloudflare 管理面板获取 |
