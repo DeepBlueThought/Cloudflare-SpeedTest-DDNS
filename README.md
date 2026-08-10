@@ -6,30 +6,38 @@
 
 An intelligent DDNS update tool powered by [CloudflareSpeedTest](https://github.com/XIU2/CloudflareSpeedTest).
 
+Current image release: `2.0.0` (`deepbluethought/cloudflarespeedtestddns:2.0.0`)
+
 ## ✨ Core Features
+
+### ✅ Real Application Availability Gate
+- **Staged validation**: Every candidate must pass TCP 443, TLS with the configured SNI, and an HTTP/1.1 WebSocket Upgrade
+- **HTTP 101 only**: `403/1034`, `404`, `5xx`, and timeout responses are all rejected
+- **Filter before download testing**: An application-incompatible IP never reaches final performance ranking
+- **Existing records are rechecked**: Current DNS IPs cannot bypass the application gate
 
 ### 🧠 Intelligent IP Pool Management
 - **Full Testing of Existing DNS Records**: Baseline test all existing IPs
 - **Best N from N Strategy**: Intelligently select the best N IPs from both old and new (N = host_ip_max)
-- **Performance-Based Ranking**: Comprehensive scoring based on latency and speed
-- **Keep High-Quality IPs**: Retain existing IPs if they're still performing well
+- **Application-First Ranking**: Rank only passing IPs by TCP/TLS/WS handshake time, then latency and speed
+- **Keep Healthy IPs**: Retain existing IPs only while they still pass the real application probe
 
 ### 📊 Dynamic Threshold Calculation
 - **Worst-Case Performance Standards**: Use worst latency & speed from existing IPs as search thresholds
 - **Adaptive Optimization**: Automatically adjust search criteria based on current network conditions
-- **Prevent Performance Degradation**: Only update when better IPs are found
+- **Availability Before Speed**: Replace an application-invalid IP even when its raw network benchmark looks fast
 - **Smart Fallback**: Use safe defaults (latency <100ms, speed >1MB/s) if tests fail
 
 ### 🔒 Safe DNS Update Strategy
 - **Seamless Transition**: Add new IP records first, then remove old ones
 - **Zero Downtime**: Avoid DNS resolution gaps
 - **Failure Protection**: Keep all old records if new IP additions fail
-- **Atomic Operations**: Ensure DNS records are always valid
+- **Safe Convergence**: Delete obsolete records only after every target record is confirmed present
 
 ### 📝 Clear Logging Output
 - **Real-time Progress**: Show testing progress and candidate IP discovery
 - **Explicit Tags**: Mark IPs with `[NEW]` and `[KEEP]` labels
-- **Detailed Metrics**: Display latency, speed, and datacenter location for each IP
+- **Detailed Metrics**: Display HTTP failure reason plus TCP/TLS/WS timing, latency, and download speed
 - **Update Summary**: Show counts of added, kept, and removed IPs
 
 ### 🐳 Full Docker Support
@@ -43,16 +51,15 @@ An intelligent DDNS update tool powered by [CloudflareSpeedTest](https://github.
 - **Manual Execution**: Trigger tests manually anytime
 - **Container Auto-Run**: Lightweight scheduling based on dcron
 
-### 🔢 Multi-IP Load Balancing
-- **Configurable Count**: Control DNS record count via `host_ip_max` parameter
-- **Load Distribution**: Multiple A records for simple load balancing
-- **Fault Tolerance**: Other IPs remain available if one fails
+### 🎯 Single-IP First
+- **One A record by default**: `host_ip_max` defaults to `1`, preventing clients and DNS caches from randomly selecting a worse IP
+- **Multi-IP remains optional**: Increase `host_ip_max` only when DNS round-robin is intentional; every retained IP must pass the application probe
 
 ### 🛠️ Additional Enhancements
 - **Version Configuration + Fallback Mechanism**:
   - Specify CloudflareSpeedTest version via environment variable
   - Automatically download specified version on container startup
-  - Fallback to pre-installed v2.3.4 if download fails
+  - Fallback to pre-installed v2.3.5 if download fails
   - Ensures container starts successfully in any network environment
 
 - **Cloudflare IP List Auto-Update**:
@@ -71,13 +78,17 @@ An intelligent DDNS update tool powered by [CloudflareSpeedTest](https://github.
        image: deepbluethought/cloudflarespeedtestddns:latest
        container_name: cloudflare-ddns
        environment:
-         - CLOUDFLARE_ST_VERSION=v2.3.4
+         - CLOUDFLARE_ST_VERSION=v2.3.5
          - zone_id=${zone_id}
          - api_token=${api_token}
          - host_name=${host_name}
          - host_ip_max=${host_ip_max}
+         - ws_probe_enabled=${ws_probe_enabled}
+         - ws_probe_host=${ws_probe_host}
+         - ws_probe_path=${ws_probe_path}
          - speedtest_para=${speedtest_para}
          - cron=${cron}
+         - healthcheck_cron=${healthcheck_cron}
        restart: unless-stopped
    ```
 
@@ -86,9 +97,15 @@ An intelligent DDNS update tool powered by [CloudflareSpeedTest](https://github.
    zone_id=your_cloudflare_zone_id
    api_token=your_cloudflare_api_token
    host_name=testip.yourdomain.com
-   host_ip_max=2
+   host_ip_max=1
+   ws_probe_enabled=true
+   ws_probe_host=www.yourdomain.com
+   ws_probe_path=/your-websocket-path
+   ws_probe_tls_verify=true
+   ws_probe_candidate_limit=20
    speedtest_para=-n 1000 -dn 2 -sl 5 -tl 100 -url https://download.parallels.com/desktop/v18/18.1.1-53328/ParallelsDesktop-18.1.1-53328.dmg
    cron=0 * * * *
+   healthcheck_cron=15,45 * * * *
    ```
 
 3. **Start the container**
@@ -137,8 +154,8 @@ docker run -d \
   --restart unless-stopped \
   `# Restart policy: always restart unless manually stopped` \
   \
-  -e CLOUDFLARE_ST_VERSION=v2.3.4 \
-  `# CloudflareSpeedTest version (optional, default v2.3.4)` \
+  -e CLOUDFLARE_ST_VERSION=v2.3.5 \
+  `# CloudflareSpeedTest version (optional, default v2.3.5)` \
   `# Fallback to pre-installed version if download fails` \
   \
   -e zone_id="your_cloudflare_zone_id" \
@@ -153,8 +170,13 @@ docker run -d \
   -e host_name="testip.yourdomain.com" \
   `# Domain to update (supports subdomains)` \
   \
-  -e host_ip_max=2 \
-  `# Maximum number of IPs in DNS (recommended: 2 for load balancing + fault tolerance)` \
+  -e host_ip_max=1 \
+  `# One application-valid IP avoids random DNS selection` \
+  \
+  -e ws_probe_enabled=true \
+  -e ws_probe_host="www.yourdomain.com" \
+  -e ws_probe_path="/your-websocket-path" \
+  `# Real TLS SNI/HTTP Host and WebSocket path` \
   \
   -e speedtest_para="-n 1000 -dn 2 -sl 5 -tl 100 -url https://download.parallels.com/desktop/v18/18.1.1-53328/ParallelsDesktop-18.1.1-53328.dmg" \
   `# CloudflareSpeedTest parameters:` \
@@ -170,6 +192,9 @@ docker run -d \
   `#   "0 * * * *"      Run every hour` \
   `#   "*/30 * * * *"   Run every 30 minutes` \
   `#   "0 */6 * * *"    Run every 6 hours` \
+  \
+  -e healthcheck_cron="15,45 * * * *" \
+  `# Lightweight current-IP check every 30 minutes; reselect on failure` \
   \
   deepbluethought/cloudflarespeedtestddns:latest
 ```
@@ -195,8 +220,8 @@ services:
     build: .
     container_name: cloudflare-ddns
     environment:
-      # CloudflareSpeedTest version (optional, default v2.3.4)
-      - CLOUDFLARE_ST_VERSION=v2.3.4
+      # CloudflareSpeedTest version (optional, default v2.3.5)
+      - CLOUDFLARE_ST_VERSION=v2.3.5
       
       # Cloudflare API Configuration
       - zone_id=${zone_id}
@@ -205,6 +230,13 @@ services:
       # Domain Configuration
       - host_name=${host_name}
       - host_ip_max=${host_ip_max}
+
+      # Real WebSocket application configuration
+      - ws_probe_enabled=${ws_probe_enabled}
+      - ws_probe_host=${ws_probe_host}
+      - ws_probe_path=${ws_probe_path}
+      - ws_probe_tls_verify=${ws_probe_tls_verify}
+      - ws_probe_candidate_limit=${ws_probe_candidate_limit}
       
       # CloudflareSpeedTest Parameters (read from .env)
       - speedtest_para=${speedtest_para}
@@ -213,6 +245,8 @@ services:
       # Example: "0 * * * *" runs every hour
       # Example: "*/30 * * * *" runs every 30 minutes
       - cron=${cron}
+      - healthcheck_cron=${healthcheck_cron}
+      - log_file=${log_file}
     restart: unless-stopped
 ```
 
@@ -220,42 +254,42 @@ services:
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `CLOUDFLARE_ST_VERSION` | No | v2.3.4 | CloudflareSpeedTest version (fallback on failure) |
+| `CLOUDFLARE_ST_VERSION` | No | v2.3.5 | CloudflareSpeedTest version (fallback on failure) |
 | `host_name` | Yes | - | Domain name to update. Supports multiple domain names separated by commas or spaces (e.g., `cf1.example.com,cf2.example.com`). |
-| `host_ip_max` | No | 2 | Maximum IPs to add to DNS (default 2 for load balancing + failover) |
+| `host_ip_max` | No | 1 | Number of DNS A records to retain; single-IP mode is recommended |
 | `zone_id` | Yes | - | Cloudflare Zone ID, obtain from Cloudflare dashboard |
 | `api_token` | Yes | - | Cloudflare API Token, obtain from Cloudflare dashboard |
 | `speedtest_para` | Yes | - | Test parameters, see details below |
 | `cron` | Yes | - | Cron expression for scheduling |
+| `ws_probe_enabled` | No | auto | `auto` enables the gate when `ws_probe_host` is set; may be explicitly `true` or `false` |
+| `ws_probe_host` | With probe | - | Real TLS SNI and HTTP Host, such as `www.example.com`; no scheme, port, or path |
+| `ws_probe_path` | No | / | WebSocket request path, such as `/deepblue` |
+| `ws_probe_tls_verify` | No | true | Verify the certificate chain and hostname; disabling it is not recommended |
+| `ws_probe_candidate_limit` | No | 20 | Number of lowest-latency candidates that receive the full application probe |
+| `ws_probe_tcp_timeout` / `ws_probe_tls_timeout` / `ws_probe_http_timeout` | No | 3 / 5 / 8 | Per-stage timeout in seconds |
+| `healthcheck_cron` | No | `15,45 * * * *` | Current-DNS-IP probe; launches a full reselection on failure |
+| `log_file` | No | `/tmp/cloudflare-bestip.log` | Plain runtime log path (`/tmp` does not survive container recreation) |
 
 ### speedtest_para Parameters
 
 - `-n`: Latency test threads; more threads = faster testing, but don't set too high on weak devices (routers); default 200, max 1000
 - `-dn`: Download test count; number of IPs to test from lowest latency; default 10. When `-sl` parameter is configured, download testing stops when the number of IPs meeting the download speed threshold reaches the `-dn` value. **Recommended: 2**
-- `-sl`: Minimum speed threshold in MB/s (dynamically adjusted to `max(baseline speed, 20)`)
-- `-tl`: Maximum latency threshold in ms (dynamically adjusted to `min(baseline latency, 100)`)
+- `-sl`: Minimum speed threshold in MB/s (uses the slowest business-valid current record, or 1 MB/s without a baseline)
+- `-tl`: Maximum latency threshold in ms (uses the slowest business-valid current record, with a 20 ms floor and 100 ms fallback)
 
-**Note**: `-sl` and `-tl` parameters are dynamically adjusted based on baseline test. Values in speedtest_para serve as default thresholds.
+**Note**: `-sl` and `-tl` are replaced by the dynamic baseline values described above. Other `speedtest_para` options are preserved.
 
 ## 📊 Workflow
 
-1. **Container Startup**
-   - Attempt to download specified CloudflareSpeedTest version
-   - If download fails → Use pre-installed v2.3.4 (fallback)
-   - Output detailed logs about version used
-   
-2. **Scheduled Task Trigger**
-   - Automatically update IP range list from Cloudflare official API
-   - Get current DNS A record IP
-   - Perform latency and speed tests on current IP (using CloudflareSpeedTest) [Baseline Test]
-   - Obtain baseline latency t and speed s
-   - Use `min(t,100)` and `max(s,20)` as test thresholds [Smart Comparison]
-   - Execute full CloudflareSpeedTest
-   - Only update DNS when new IP meets latency ≤ t AND speed ≥ s
-   
-3. **Quality Assurance**
-   - Every update guarantees network quality improvement
-   - Won't degrade network due to occasional test fluctuations
+1. Fetch current DNS A records and recheck each old IP using the real `ws_probe_host` and `ws_probe_path`.
+2. Run CloudflareST in latency-only mode (`-dd`) and take the first `ws_probe_candidate_limit` results.
+3. Run TCP 443, TLS SNI, and WebSocket Upgrade checks in order; only HTTP `101` enters the usable pool.
+4. Run CloudflareST download testing only against that usable pool.
+5. Rank passing IPs by `TCP×0.3 + TLS×0.2 + WS×0.5`; latency and download speed provide later tie-breaking.
+6. Ensure replacement records exist before deleting obsolete records. If an add fails, old records are retained.
+7. The watchdog periodically checks only current DNS IPs and launches a full reselection if any stops returning `101`.
+
+> `host_name` is the DDNS record being written. `ws_probe_host` is the actual Cloudflare application Host/SNI. They may differ, so the program does not guess this mapping.
 
 **Note:**
 CloudflareSpeedTest tool workflow:
@@ -268,6 +302,11 @@ CloudflareSpeedTest tool workflow:
 ### Quick Test
 
 ```bash
+# Offline regression tests; no Cloudflare credentials required
+bash tests/business_probe_test.sh
+bash tests/main_flow_test.sh
+bash tests/healthcheck_test.sh
+
 # Local test script
 ./test.sh
 
@@ -276,6 +315,15 @@ CloudflareSpeedTest tool workflow:
 ```
 
 ## 📝 Example Logs
+
+### WebSocket application gate
+
+```text
+[2026-08-10 04:38:00] [INFO] Business probe 162.159.44.212: TLS SNI OK (www.example.com)
+[2026-08-10 04:38:00] [WARN] Business probe 162.159.44.212: WS FAIL (HTTP 403: error code: 1034)
+[2026-08-10 04:38:01] [SUCCESS] Business probe 172.64.229.53: WS 101 OK (TCP 20.00ms, TLS 55.00ms, WS 105.00ms, score 69.50)
+[2026-08-10 04:38:01] [SUCCESS] Selected 1 business-valid IP(s) for DNS:
+```
 
 ### IP List Auto-Update
 ```
@@ -303,8 +351,8 @@ CloudflareSpeedTest is ready
 Attempting to download CloudflareSpeedTest v9.9.9...
 ⚠ Failed to download CloudflareSpeedTest v9.9.9
 ⚠ Reason: Network error or version not found
-→ Using fallback version v2.3.4 (pre-installed)
-✓ Fallback to CloudflareSpeedTest v2.3.4 successfully
+→ Using fallback version v2.3.5 (pre-installed)
+✓ Fallback to CloudflareSpeedTest v2.3.5 successfully
 CloudflareSpeedTest is ready
 ```
 

@@ -56,11 +56,11 @@ if [[ "$os" == "Darwin" ]]; then
   # macOS
   if [[ "$arch" == "arm64" ]]; then
     binary="./CloudflareST_darwin_arm64"
-    download_url="https://github.com/XIU2/CloudflareSpeedTest/releases/download/v2.3.4/cfst_darwin_arm64.zip"
+    download_url="https://github.com/XIU2/CloudflareSpeedTest/releases/download/v2.3.5/cfst_darwin_arm64.zip"
     zip_name="cfst_darwin_arm64.zip"
   elif [[ "$arch" == "x86_64" ]]; then
     binary="./CloudflareST_darwin_amd64"
-    download_url="https://github.com/XIU2/CloudflareSpeedTest/releases/download/v2.3.4/cfst_darwin_amd64.zip"
+    download_url="https://github.com/XIU2/CloudflareSpeedTest/releases/download/v2.3.5/cfst_darwin_amd64.zip"
     zip_name="cfst_darwin_amd64.zip"
   else
     echo "❌ 不支持的 macOS 架构: $arch"
@@ -69,12 +69,12 @@ if [[ "$os" == "Darwin" ]]; then
 elif [[ "$os" == "Linux" ]]; then
   # Linux
   if [[ "$arch" == "arm64" ]] || [[ "$arch" == "aarch64" ]]; then
-    binary="./CloudflareST_linux_arm64"
-    download_url="https://github.com/XIU2/CloudflareSpeedTest/releases/download/v2.3.4/cfst_linux_arm64.tar.gz"
+    binary="./CloudflareST_arm64"
+    download_url="https://github.com/XIU2/CloudflareSpeedTest/releases/download/v2.3.5/cfst_linux_arm64.tar.gz"
     tar_name="cfst_linux_arm64.tar.gz"
   elif [[ "$arch" == "x86_64" ]] || [[ "$arch" == "amd64" ]]; then
-    binary="./CloudflareST_linux_amd64"
-    download_url="https://github.com/XIU2/CloudflareSpeedTest/releases/download/v2.3.4/cfst_linux_amd64.tar.gz"
+    binary="./CloudflareST_amd64"
+    download_url="https://github.com/XIU2/CloudflareSpeedTest/releases/download/v2.3.5/cfst_linux_amd64.tar.gz"
     tar_name="cfst_linux_amd64.tar.gz"
   else
     echo "❌ 不支持的 Linux 架构: $arch"
@@ -125,14 +125,25 @@ else
       echo "✓ 下载完成"
       echo "正在解压..."
       
-      if tar -xzf "/tmp/$tar_name" -C /tmp/ > /dev/null 2>&1; then
-        mv /tmp/CloudflareST "$binary"
-        chmod +x "$binary"
-        rm "/tmp/$tar_name"
-        echo "✓ 安装完成: $binary"
+      extract_dir=$(mktemp -d "${TMPDIR:-/tmp}/cfst-local.XXXXXX")
+      if tar -xzf "/tmp/$tar_name" -C "$extract_dir" > /dev/null 2>&1; then
+        downloaded_binary=$(find "$extract_dir" -type f \( -name cfst -o -name CloudflareST \) | head -n 1)
+        if [[ -n "$downloaded_binary" && -f "$downloaded_binary" ]]; then
+          mv "$downloaded_binary" "$binary"
+          chmod +x "$binary"
+          rm -f "/tmp/$tar_name"
+          rm -rf "$extract_dir"
+          echo "✓ 安装完成: $binary"
+        else
+          echo "❌ 压缩包中未找到 CloudflareSpeedTest 二进制文件"
+          rm -f "/tmp/$tar_name"
+          rm -rf "$extract_dir"
+          exit 1
+        fi
       else
         echo "❌ 解压失败"
         rm -f "/tmp/$tar_name"
+        rm -rf "$extract_dir"
         exit 1
       fi
     else

@@ -2,13 +2,16 @@
 
 🚀 An intelligent DDNS update tool that automatically finds the fastest Cloudflare IP and updates your DNS records.
 
+Current image release: `2.0.0` (`deepbluethought/cloudflarespeedtestddns:2.0.0`)
+
 ## ✨ Key Features
 
 - **🧠 Intelligent IP Pool Management** - Tests all existing DNS records and selects the best N IPs
+- **✅ WebSocket Application Gate** - Requires TCP 443, TLS SNI, and HTTP `101 Switching Protocols`
 - **📊 Dynamic Threshold Calculation** - Adapts search criteria based on current network conditions
 - **🔒 Safe DNS Updates** - Zero-downtime updates with rollback protection
 - **🐳 Full Docker Support** - Works with both docker-compose and docker run
-- **🔢 Multi-IP Load Balancing** - Configure multiple A records for fault tolerance
+- **🎯 Single-IP by Default** - Avoids clients randomly selecting an application-incompatible record
 - **⏰ Flexible Scheduling** - Customizable cron jobs for automated testing
 
 ## 🚀 Quick Start
@@ -32,9 +35,13 @@ docker run -d \
   -e zone_id="your_cloudflare_zone_id" \
   -e api_token="your_cloudflare_api_token" \
   -e host_name="testip.yourdomain.com" \
-  -e host_ip_max=2 \
+  -e host_ip_max=1 \
+  -e ws_probe_enabled=true \
+  -e ws_probe_host="www.yourdomain.com" \
+  -e ws_probe_path="/your-websocket-path" \
   -e speedtest_para="-n 1000 -dn 2 -sl 5 -tl 100" \
   -e cron="0 * * * *" \
+  -e healthcheck_cron="15,45 * * * *" \
   deepbluethought/cloudflarespeedtestddns:latest
 ```
 
@@ -45,9 +52,12 @@ docker run -d \
 | `zone_id` | Yes | - | Cloudflare Zone ID |
 | `api_token` | Yes | - | Cloudflare API Token (needs Zone.DNS edit permission) |
 | `host_name` | Yes | - | Domain to update (e.g., testip.example.com) |
-| `host_ip_max` | No | 2 | Number of IPs to maintain in DNS records |
+| `host_ip_max` | No | 1 | Number of IPs to maintain; single-IP mode is recommended |
 | `speedtest_para` | Yes | - | CloudflareSpeedTest parameters |
 | `cron` | Yes | - | Cron expression for scheduling (e.g., "0 * * * *" for hourly) |
+| `ws_probe_host` | For WS gate | - | Real TLS SNI and HTTP Host used by the application |
+| `ws_probe_path` | No | / | WebSocket path, such as `/deepblue` |
+| `healthcheck_cron` | No | `15,45 * * * *` | Current-IP watchdog schedule |
 
 ## 🔧 Configuration Example
 
@@ -56,9 +66,13 @@ docker run -d \
 zone_id=your_zone_id_here
 api_token=your_api_token_here
 host_name=testip.yourdomain.com
-host_ip_max=2
+host_ip_max=1
+ws_probe_enabled=true
+ws_probe_host=www.yourdomain.com
+ws_probe_path=/your-websocket-path
 speedtest_para="-n 1000 -dn 2 -sl 5 -tl 100 -url https://download.example.com/largefile.bin"
 cron=0 * * * *
+healthcheck_cron=15,45 * * * *
 ```
 
 ### Getting Cloudflare Credentials
@@ -70,11 +84,11 @@ cron=0 * * * *
 
 ## 📊 How It Works
 
-1. **Baseline Testing** - Tests all existing DNS record IPs
-2. **Dynamic Thresholds** - Uses worst-case performance as search criteria
-3. **IP Discovery** - Scans Cloudflare IP ranges for better performance
-4. **Intelligent Selection** - Chooses best N IPs from both old and new
-5. **Safe Updates** - Adds new records before removing old ones
+1. **Existing-IP Gate** - Rechecks current DNS IPs against the real WebSocket Host/path
+2. **Latency Discovery** - Finds low-latency candidates without download testing
+3. **Application Gate** - Rejects every candidate that does not return HTTP 101
+4. **Performance Test** - Download-tests only the business-valid pool
+5. **Safe Update** - Adds the selected IP before removing rejected or obsolete records
 
 ## 📝 Example Logs
 

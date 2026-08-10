@@ -30,11 +30,12 @@ if [ -z "$DOCKER_USERNAME" ]; then
 fi
 
 # 询问版本号
-read -p "请输入版本号 (默认: v1.0.0): " VERSION
-VERSION=${VERSION:-v1.0.0}
+read -p "请输入版本号 (默认: 2.0.0): " VERSION
+VERSION=${VERSION:-2.0.0}
+VERSION=${VERSION#v}
 
 # 镜像名称
-IMAGE_NAME="${DOCKER_USERNAME}/cloudflare-speedtest-ddns"
+IMAGE_NAME="${DOCKER_USERNAME}/cloudflarespeedtestddns"
 
 echo ""
 echo -e "${YELLOW}构建配置:${NC}"
@@ -53,15 +54,15 @@ fi
 # 检查必要的文件
 echo ""
 echo -e "${BLUE}>>> 检查必要文件...${NC}"
-required_files=("CloudflareST_amd64" "CloudflareST_arm64" "main.sh" "entrypoint.sh" "Dockerfile")
+required_files=("CloudflareST_amd64" "CloudflareST_arm64" "main.sh" "healthcheck.sh" "lib/business_probe.sh" "entrypoint.sh" "Dockerfile")
 for file in "${required_files[@]}"; do
     if [ ! -f "$file" ]; then
         echo -e "${RED}❌ 缺少文件: $file${NC}"
         
         if [[ "$file" == "CloudflareST_"* ]]; then
             echo -e "${YELLOW}提示: 请从以下地址下载或运行 ./download-binaries.sh:${NC}"
-            echo "  https://github.com/XIU2/CloudflareSpeedTest/releases/download/v2.3.4/cfst_linux_amd64.tar.gz"
-            echo "  https://github.com/XIU2/CloudflareSpeedTest/releases/download/v2.3.4/cfst_linux_arm64.tar.gz"
+            echo "  https://github.com/XIU2/CloudflareSpeedTest/releases/download/v2.3.5/cfst_linux_amd64.tar.gz"
+            echo "  https://github.com/XIU2/CloudflareSpeedTest/releases/download/v2.3.5/cfst_linux_arm64.tar.gz"
         fi
         exit 1
     fi
@@ -71,7 +72,7 @@ done
 # 构建镜像
 echo ""
 echo -e "${BLUE}>>> 构建 Docker 镜像...${NC}"
-if docker build -t "${IMAGE_NAME}:latest" -t "${IMAGE_NAME}:${VERSION}" .; then
+if docker build --build-arg "APP_VERSION=${VERSION}" -t "${IMAGE_NAME}:latest" -t "${IMAGE_NAME}:${VERSION}" .; then
     echo -e "${GREEN}✓ 镜像构建成功${NC}"
 else
     echo -e "${RED}❌ 镜像构建失败${NC}"

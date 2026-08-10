@@ -24,7 +24,10 @@ temp/
 # Test results
 result.csv
 baseline_ip.txt
+baseline_ips.txt
 baseline_result.csv
+latency_candidates.csv
+business_valid_ips.txt
 
 # Environment variables (contains sensitive data)
 .env

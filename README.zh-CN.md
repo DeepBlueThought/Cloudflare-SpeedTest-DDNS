@@ -7,30 +7,38 @@
 
 感谢 [CloudflareSpeedTest](https://github.com/XIU2/CloudflareSpeedTest) 的Cloudflare测速工具。
 
+当前镜像版本：`2.0.0`（`deepbluethought/cloudflarespeedtestddns:2.0.0`）
+
 ## ✨ 核心特性
+
+### ✅ 真实业务可用性硬门槛
+- **分阶段检查**：候选 IP 必须依次通过 TCP 443、TLS SNI 和 HTTP/1.1 WebSocket Upgrade
+- **只接受 101**：`403/1034`、`404`、`5xx`、超时等结果全部淘汰
+- **先过滤再下载测速**：业务不可用的 IP 不会参与最终性能排序
+- **旧记录同样复检**：已经存在于 DNS 中的 IP 也不能绕过业务检查
 
 ### 🧠 智能IP池管理
 - **全量测试现有DNS记录**：对所有现有IP进行基准测试
 - **最优N选N策略**：从新旧IP中智能选择最优的N个（N = host_ip_max）
-- **性能优先排序**：基于延迟和速度综合评分，确保每次都是最佳组合
-- **保留优质IP**：如果现有IP性能仍然优秀，会被保留而不是盲目替换
+- **业务优先排序**：仅在通过者中按 TCP/TLS/WS 握手时间排序，再比较延迟和速度
+- **保留健康IP**：现有 IP 只有继续通过真实业务探测才可能被保留
 
 ### 📊 动态阈值计算
 - **基于最差性能设置标准**：使用现有IP中的最差延迟和速度作为搜索阈值
 - **自适应优化**：根据当前网络环境自动调整搜索标准
-- **避免性能降级**：只有找到更优的IP才会触发更新
+- **可用性高于速度**：即使坏 IP 的传统测速很快，只要业务探测失败就必须替换
 - **智能回退**：如果测试失败，使用安全的默认值（延迟<100ms，速度>1MB/s）
 
 ### 🔒 安全DNS更新策略
 - **无缝切换**：先添加新IP记录，再删除旧记录
 - **零停机时间**：避免DNS解析空窗期
 - **失败保护**：如果新IP添加失败，保留所有旧记录不做改动
-- **原子操作**：确保DNS记录始终有效
+- **安全收敛**：确认所有目标记录均已存在后，才删除过期记录
 
 ### 📝 清晰的日志输出
 - **实时进度**：显示测试进度和候选IP发现过程
 - **明确标记**：用 `[NEW]` 和 `[KEEP]` 标记新增和保留的IP
-- **详细指标**：输出每个IP的延迟、速度和数据中心位置
+- **详细指标**：输出 HTTP 失败原因、TCP/TLS/WS 耗时、延迟和下载速度
 - **更新摘要**：显示添加、保留、删除的IP数量
 
 ### 🐳 完整Docker支持
@@ -44,16 +52,15 @@
 - **手动执行**：支持随时手动触发测试
 - **容器内自动运行**：基于dcron实现轻量级定时任务
 
-### 🔢 多IP负载均衡
-- **可配置数量**：通过 `host_ip_max` 参数控制DNS记录数量
-- **负载均衡**：多个A记录实现简单的负载分担
-- **容错冗余**：一个IP失效时，其他IP仍可提供服务
+### 🎯 单 IP 优先
+- **默认一个 A 记录**：`host_ip_max` 默认值为 `1`，避免客户端、代理或 DNS 缓存随机命中较差 IP
+- **仍支持多 IP**：明确需要 DNS 轮询时可以把 `host_ip_max` 调大，但每个 IP 都必须通过业务探测
 
 ### 🛠️ 其他增强功能
 - **版本可配置 + Fallback 机制**：
   - 通过环境变量指定 CloudflareSpeedTest 版本
   - 容器启动时自动下载指定版本
-  - 下载失败自动使用预置的 v2.3.4 版本
+  - 下载失败自动使用预置的 v2.3.5 版本
   - 确保容器在任何网络环境下都能正常启动
 
 - **Cloudflare IP 列表自动更新**：
@@ -72,13 +79,19 @@
        image: deepbluethought/cloudflarespeedtestddns:latest
        container_name: cloudflare-ddns
        environment:
-         - CLOUDFLARE_ST_VERSION=v2.3.4
+         - CLOUDFLARE_ST_VERSION=v2.3.5
          - zone_id=${zone_id}
          - api_token=${api_token}
          - host_name=${host_name}
          - host_ip_max=${host_ip_max}
+         - ws_probe_enabled=${ws_probe_enabled}
+         - ws_probe_host=${ws_probe_host}
+         - ws_probe_path=${ws_probe_path}
+         - ws_probe_tls_verify=${ws_probe_tls_verify}
+         - ws_probe_candidate_limit=${ws_probe_candidate_limit}
          - speedtest_para=${speedtest_para}
          - cron=${cron}
+         - healthcheck_cron=${healthcheck_cron}
        restart: unless-stopped
    ```
 
@@ -87,9 +100,15 @@
    zone_id=你的_cloudflare_zone_id
    api_token=你的_cloudflare_api_token
    host_name=testip.yourdomain.com
-   host_ip_max=2
+   host_ip_max=1
+   ws_probe_enabled=true
+   ws_probe_host=www.yourdomain.com
+   ws_probe_path=/your-websocket-path
+   ws_probe_tls_verify=true
+   ws_probe_candidate_limit=20
    speedtest_para=-n 1000 -dn 2 -sl 5 -tl 100 -url https://download.parallels.com/desktop/v18/18.1.1-53328/ParallelsDesktop-18.1.1-53328.dmg
    cron=0 * * * *
+   healthcheck_cron=15,45 * * * *
    ```
 
 3. **启动容器**
@@ -125,7 +144,7 @@ docker run -d \
   --name cloudflare-ddns \
   --restart unless-stopped \
   --env-file .env \
-  deepbluethought/cloudflare-speedtest-ddns:latest
+  deepbluethought/cloudflarespeedtestddns:latest
 ```
 
 #### 手动指定所有参数
@@ -138,8 +157,8 @@ docker run -d \
   --restart unless-stopped \
   `# 容器重启策略：除非手动停止，否则总是重启` \
   \
-  -e CLOUDFLARE_ST_VERSION=v2.3.4 \
-  `# CloudflareSpeedTest 工具版本号（可选，默认 v2.3.4）` \
+  -e CLOUDFLARE_ST_VERSION=v2.3.5 \
+  `# CloudflareSpeedTest 工具版本号（可选，默认 v2.3.5）` \
   `# 如果下载失败会自动使用预置的 fallback 版本` \
   \
   -e zone_id="your_cloudflare_zone_id" \
@@ -154,8 +173,13 @@ docker run -d \
   -e host_name="testip.yourdomain.com" \
   `# 要更新的域名（支持子域名）` \
   \
-  -e host_ip_max=2 \
-  `# 最多添加几个 IP 到 DNS（建议 2 个实现负载均衡 + 容错）` \
+  -e host_ip_max=1 \
+  `# 推荐只维护一个业务可用 IP，避免 DNS 随机选择` \
+  \
+  -e ws_probe_enabled=true \
+  -e ws_probe_host="www.yourdomain.com" \
+  -e ws_probe_path="/your-websocket-path" \
+  `# 上面两项指定真实业务的 TLS SNI/Host 与 WebSocket 路径` \
   \
   -e speedtest_para="-n 1000 -dn 2 -sl 5 -tl 100 -url https://download.parallels.com/desktop/v18/18.1.1-53328/ParallelsDesktop-18.1.1-53328.dmg" \
   `# CloudflareSpeedTest 测试参数：` \
@@ -172,7 +196,10 @@ docker run -d \
   `#   "*/30 * * * *"   每 30 分钟执行一次` \
   `#   "0 */6 * * *"    每 6 小时执行一次` \
   \
-  deepbluethought/cloudflare-speedtest-ddns:latest
+  -e healthcheck_cron="15,45 * * * *" \
+  `# 每 30 分钟轻量检查当前 DNS IP，失败才触发完整重选` \
+  \
+  deepbluethought/cloudflarespeedtestddns:latest
 ```
 
 #### 手动执行一次测试（不启动定时任务）
@@ -180,7 +207,7 @@ docker run -d \
 ```bash
 docker run --rm \
   --env-file .env \
-  deepbluethought/cloudflare-speedtest-ddns:latest \
+  deepbluethought/cloudflarespeedtestddns:latest \
   bash -c "cd /app && bash main.sh"
 ```
 
@@ -196,8 +223,8 @@ services:
     build: .
     container_name: cloudflare-ddns
     environment:
-      # CloudflareSpeedTest 版本（可选，默认 v2.3.4）
-      - CLOUDFLARE_ST_VERSION=v2.3.4
+      # CloudflareSpeedTest 版本（可选，默认 v2.3.5）
+      - CLOUDFLARE_ST_VERSION=v2.3.5
       
       # Cloudflare API 配置
       - zone_id=${zone_id}
@@ -206,6 +233,13 @@ services:
       # 域名配置
       - host_name=${host_name}
       - host_ip_max=${host_ip_max}
+
+      # WebSocket 真实业务配置
+      - ws_probe_enabled=${ws_probe_enabled}
+      - ws_probe_host=${ws_probe_host}
+      - ws_probe_path=${ws_probe_path}
+      - ws_probe_tls_verify=${ws_probe_tls_verify}
+      - ws_probe_candidate_limit=${ws_probe_candidate_limit}
       
       # CloudflareSpeedTest 测试参数（从 .env 读取）
       - speedtest_para=${speedtest_para}
@@ -214,6 +248,8 @@ services:
       # 示例: "0 * * * *" 表示每小时执行一次
       # 示例: "*/30 * * * *" 表示每30分钟执行一次
       - cron=${cron}
+      - healthcheck_cron=${healthcheck_cron}
+      - log_file=${log_file}
     restart: unless-stopped
 ```
 
@@ -221,42 +257,42 @@ services:
 
 | 变量名 | 必填 | 默认值 | 说明 |
 |--------|--------------|------|
-| `CLOUDFLARE_ST_VERSION` | 否 | v2.3.4 | CloudflareSpeedTest 版本号（下载失败会fallback） |
+| `CLOUDFLARE_ST_VERSION` | 否 | v2.3.5 | CloudflareSpeedTest 版本号（下载失败会fallback） |
 | `host_name` | 是 | - | 需要更新的域名（支持多个，用逗号或空格分隔，如 `cf1.a.com,cf2.a.com`） |
-| `host_ip_max` | 否 | 2 | 最多添加几个 IP 到 DNS（默认2个可以实现负载均衡 + 容错） |
+| `host_ip_max` | 否 | 1 | DNS 中保留的 A 记录数量；推荐保持单 IP |
 | `zone_id` | 是 | - | Cloudflare Zone ID，自行从 Cloudflare 管理面板获取 |
 | `api_token` | 是 | - | Cloudflare API Token，自行从 Cloudflare 管理面板获取 |
 | `speedtest_para` | 是 | - | 测试参数，详见下方说明 |
 | `cron` | 是 | - | Cron 表达式，定时执行 |
+| `ws_probe_enabled` | 否 | auto | `auto` 在设置 `ws_probe_host` 时启用；也可显式设为 `true/false` |
+| `ws_probe_host` | 业务探测时是 | - | 真实 TLS SNI 与 HTTP Host，例如 `www.example.com`；不要填写 `https://` 或路径 |
+| `ws_probe_path` | 否 | / | WebSocket 路径，例如 `/deepblue` |
+| `ws_probe_tls_verify` | 否 | true | 验证证书链及证书主机名；不建议关闭 |
+| `ws_probe_candidate_limit` | 否 | 20 | 对延迟排名最前的多少个候选执行完整业务探测 |
+| `ws_probe_tcp_timeout` / `ws_probe_tls_timeout` / `ws_probe_http_timeout` | 否 | 3 / 5 / 8 | 各阶段超时时间（秒） |
+| `healthcheck_cron` | 否 | `15,45 * * * *` | 当前 DNS IP 的轻量业务健康检查；失败时触发完整重选 |
+| `log_file` | 否 | `/tmp/cloudflare-bestip.log` | 无 ANSI 颜色的持久运行日志路径（容器重建后 `/tmp` 不保留） |
 
 ### speedtest_para 参数说明
 
 - `-n`: 延迟测速线程；越多延迟测速越快，性能弱的设备 (如路由器) 请勿太高；(默认 200 最多 1000)
 - `-dn`: 下载测速数量；延迟测速并排序后，从最低延迟起下载测速的数量；(默认 10 个)，如果配置了-sl参数，那么当下载测速达到-sl参数的ip达到dn数量的时候，下载测速会停止。建议配置为2
-- `-sl`: 最低速度阈值 MB/s（动态调整为 `max(基准速度, 20)`）
-- `-tl`: 最高延迟阈值 ms（动态调整为 `min(基准延迟, 100)`）
+- `-sl`: 最低速度阈值 MB/s（取业务有效旧记录中的最慢速度；无基准时为 1 MB/s）
+- `-tl`: 最高延迟阈值 ms（取业务有效旧记录中的最慢延迟，最低 20 ms；无基准时为 100 ms）
 
-**注意**: `-sl` 和 `-tl` 参数会根据基准测试被动态调整，在speedtest_para参数中填写的数值将作为默认阈值使用。
+**注意**：`speedtest_para` 中的 `-sl` 和 `-tl` 会被上述动态基准值替换，其他参数保持不变。
 
 ## 📊 工作流程
 
-1. **容器启动**
-   - 尝试下载指定版本的 CloudflareSpeedTest
-   - 如果下载失败 → 使用预置的 v2.3.4 版本（fallback）
-   - 输出详细日志说明使用的版本
-   
-2. **定时任务触发**
-   - 自动从 Cloudflare 官方更新 IP 地址段列表
-   - 获取当前 DNS A 记录 IP
-   - 对该 IP 进行延迟和速度测试（使用 CloudflareSpeedTest）【基准测试】
-   - 得到基准延迟 t 和速度 s
-   - 使用 `min(t,100)` 和 `max(s,20)` 作为测试阈值【智能对比】
-   - 执行 CloudflareSpeedTest 全量测试
-   - 只有当新 IP 同时满足延迟 ≤ t 且速度 ≥ s 时才更新 DNS
-   
-3. **确保质量**
-   - 每次更新都保证网络质量提升
-   - 不会因为偶然的测试结果导致网络降级
+1. 获取当前 DNS A 记录，并用真实 `ws_probe_host`/`ws_probe_path` 复检旧 IP。
+2. CloudflareST 只做候选延迟发现（`-dd`），从低延迟结果中取前 `ws_probe_candidate_limit` 个。
+3. 每个候选依次执行 TCP 443、带 SNI 的 TLS 握手和 WebSocket Upgrade；只有 HTTP `101` 才进入可用池。
+4. CloudflareST 只对可用池执行下载测速。
+5. 对通过者按 `TCP×0.3 + TLS×0.2 + WS×0.5` 的业务握手分数排序，延迟和下载速度用于后续比较。
+6. 先确保目标记录已经存在，再删除非目标记录；如果添加失败，则保留旧记录。
+7. watchdog 定期只检查当前 DNS IP；一旦不再返回 `101`，立即触发完整重选。
+
+> `host_name` 是要写入的 DDNS 记录名；`ws_probe_host` 是 Cloudflare 实际承载业务的 Host/SNI。二者可能相同，也可能不同。程序不会猜测这个映射。
 
 **注意：**
 CloudflareSpeedTest工具整个流程大概步骤：
@@ -269,6 +305,11 @@ CloudflareSpeedTest工具整个流程大概步骤：
 ### 快速测试
 
 ```bash
+# 无网络、无 Cloudflare 凭据的回归测试
+bash tests/business_probe_test.sh
+bash tests/main_flow_test.sh
+bash tests/healthcheck_test.sh
+
 # 本地测试脚本
 ./test.sh
 
@@ -277,6 +318,15 @@ CloudflareSpeedTest工具整个流程大概步骤：
 ```
 
 ## 📝 示例日志
+
+### WebSocket 业务门槛
+
+```text
+[2026-08-10 04:38:00] [INFO] Business probe 162.159.44.212: TLS SNI OK (www.example.com)
+[2026-08-10 04:38:00] [WARN] Business probe 162.159.44.212: WS FAIL (HTTP 403: error code: 1034)
+[2026-08-10 04:38:01] [SUCCESS] Business probe 172.64.229.53: WS 101 OK (TCP 20.00ms, TLS 55.00ms, WS 105.00ms, score 69.50)
+[2026-08-10 04:38:01] [SUCCESS] Selected 1 business-valid IP(s) for DNS:
+```
 
 ### IP 列表自动更新
 ```
@@ -304,8 +354,8 @@ CloudflareSpeedTest is ready
 Attempting to download CloudflareSpeedTest v9.9.9...
 ⚠ Failed to download CloudflareSpeedTest v9.9.9
 ⚠ Reason: Network error or version not found
-→ Using fallback version v2.3.4 (pre-installed)
-✓ Fallback to CloudflareSpeedTest v2.3.4 successfully
+→ Using fallback version v2.3.5 (pre-installed)
+✓ Fallback to CloudflareSpeedTest v2.3.5 successfully
 CloudflareSpeedTest is ready
 ```
 

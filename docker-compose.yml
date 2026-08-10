@@ -3,14 +3,22 @@ services:
     build: .
     container_name: cloudflare-speedtest-ddns
     environment:
-      # CloudflareSpeedTest 版本（可选，默认 v2.3.4）
-      - CLOUDFLARE_ST_VERSION=v2.3.4
+      # CloudflareSpeedTest 版本（可选，默认 v2.3.5）
+      - CLOUDFLARE_ST_VERSION=v2.3.5
       
       # Cloudflare API 参数（从 .env 文件读取）
       - host_name=${host_name}
-      - host_ip_max=${host_ip_max:-2}
+      # 单 IP 是推荐默认值，避免 DNS 客户端随机命中较差的备用记录
+      - host_ip_max=${host_ip_max:-1}
       - zone_id=${zone_id}
       - api_token=${api_token}
+
+      # 真实业务探测：Host/SNI 必须是承载 WS 业务的域名，而非必然等于 host_name
+      - ws_probe_enabled=${ws_probe_enabled:-auto}
+      - ws_probe_host=${ws_probe_host}
+      - ws_probe_path=${ws_probe_path:-/}
+      - ws_probe_tls_verify=${ws_probe_tls_verify:-true}
+      - ws_probe_candidate_limit=${ws_probe_candidate_limit:-20}
       
       # CloudflareSpeedTest 测试参数（从 .env 读取）
       - speedtest_para=${speedtest_para}
@@ -20,5 +28,8 @@ services:
       # 示例: "*/30 * * * *" 表示每30分钟执行一次
       # 测试时使用 "* * * * *" 每分钟执行一次，方便观察
       - cron=${cron:-0 * * * *}
+      # 当前 DNS IP 的轻量健康检查；失败时才触发完整重选
+      - healthcheck_cron=${healthcheck_cron:-15,45 * * * *}
+      - log_file=${log_file:-/tmp/cloudflare-bestip.log}
     
     restart: unless-stopped
