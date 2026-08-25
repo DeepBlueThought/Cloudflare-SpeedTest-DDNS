@@ -7,7 +7,7 @@
 
 感谢 [CloudflareSpeedTest](https://github.com/XIU2/CloudflareSpeedTest) 的Cloudflare测速工具。
 
-当前镜像版本：`2.0.0`（`deepbluethought/cloudflarespeedtestddns:2.0.0`）
+当前镜像版本：`2.1.0`（`deepbluethought/cloudflarespeedtestddns:2.1.0`）
 
 ## ✨ 核心特性
 
@@ -20,7 +20,7 @@
 ### 🧠 智能IP池管理
 - **全量测试现有DNS记录**：对所有现有IP进行基准测试
 - **最优N选N策略**：从新旧IP中智能选择最优的N个（N = host_ip_max）
-- **业务优先排序**：仅在通过者中按 TCP/TLS/WS 握手时间排序，再比较延迟和速度
+- **速度优先排序**：HTTP `101` 是硬门槛；所有通过者都执行下载测速，再按速度、延迟和握手耗时依次比较
 - **保留健康IP**：现有 IP 只有继续通过真实业务探测才可能被保留
 
 ### 📊 动态阈值计算
@@ -184,7 +184,7 @@ docker run -d \
   -e speedtest_para="-n 1000 -dn 2 -sl 5 -tl 100 -url https://download.parallels.com/desktop/v18/18.1.1-53328/ParallelsDesktop-18.1.1-53328.dmg" \
   `# CloudflareSpeedTest 测试参数：` \
   `#   -n 1000    : 延迟测试线程数（最大 1000，性能强可设高）` \
-  `#   -dn 2      : 下载测速数量（找到 2 个符合条件的 IP 就停止）` \
+  `#   -dn 2      : 普通模式下载数量；WS 模式会测速全部业务有效候选` \
   `#   -sl 5      : 最低速度阈值 5 MB/s（会根据基准测试动态调整）` \
   `#   -tl 100    : 最高延迟阈值 100 ms（会根据基准测试动态调整）` \
   `#   -url       : 测速文件 URL（建议使用通过 Cloudflare CDN 的大文件）` \
@@ -276,7 +276,7 @@ services:
 ### speedtest_para 参数说明
 
 - `-n`: 延迟测速线程；越多延迟测速越快，性能弱的设备 (如路由器) 请勿太高；(默认 200 最多 1000)
-- `-dn`: 下载测速数量；延迟测速并排序后，从最低延迟起下载测速的数量；(默认 10 个)，如果配置了-sl参数，那么当下载测速达到-sl参数的ip达到dn数量的时候，下载测速会停止。建议配置为2
+- `-dn`: 下载测速数量。启用 WebSocket 业务探测时，第二阶段会自动覆盖此值，对全部业务有效候选执行下载测速。
 - `-sl`: 最低速度阈值 MB/s（取业务有效旧记录中的最慢速度；无基准时为 1 MB/s）
 - `-tl`: 最高延迟阈值 ms（取业务有效旧记录中的最慢延迟，最低 20 ms；无基准时为 100 ms）
 
@@ -287,12 +287,14 @@ services:
 1. 获取当前 DNS A 记录，并用真实 `ws_probe_host`/`ws_probe_path` 复检旧 IP。
 2. CloudflareST 只做候选延迟发现（`-dd`），从低延迟结果中取前 `ws_probe_candidate_limit` 个。
 3. 每个候选依次执行 TCP 443、带 SNI 的 TLS 握手和 WebSocket Upgrade；只有 HTTP `101` 才进入可用池。
-4. CloudflareST 只对可用池执行下载测速。
-5. 对通过者按 `TCP×0.3 + TLS×0.2 + WS×0.5` 的业务握手分数排序，延迟和下载速度用于后续比较。
+4. CloudflareST 对可用池中的全部 IP 执行下载测速。
+5. 最终先按下载速度从高到低排序，再按延迟和 WebSocket 握手分数排序。可用性仍是硬门槛，不会用速度补偿业务失败。
 6. 先确保目标记录已经存在，再删除非目标记录；如果添加失败，则保留旧记录。
 7. watchdog 定期只检查当前 DNS IP；一旦不再返回 `101`，立即触发完整重选。
 
 > `host_name` 是要写入的 DDNS 记录名；`ws_probe_host` 是 Cloudflare 实际承载业务的 Host/SNI。二者可能相同，也可能不同。程序不会猜测这个映射。
+
+> HTTP `101` 验证的是 WebSocket 握手可用性，不等于 VLESS/Xray 载荷吞吐量。本项目不内置或运行 Xray；在业务硬门槛之后，仍使用下载测速作为项目职责范围内最接近实际性能的指标。
 
 **注意：**
 CloudflareSpeedTest工具整个流程大概步骤：

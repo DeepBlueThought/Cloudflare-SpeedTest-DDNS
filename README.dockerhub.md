@@ -2,13 +2,13 @@
 
 🚀 An intelligent DDNS update tool that automatically finds the fastest Cloudflare IP and updates your DNS records.
 
-Current image release: `2.0.0` (`deepbluethought/cloudflarespeedtestddns:2.0.0`)
+Current image release: `2.1.0` (`deepbluethought/cloudflarespeedtestddns:2.1.0`)
 
 ## ✨ Key Features
 
 - **🧠 Intelligent IP Pool Management** - Tests all existing DNS records and selects the best N IPs
 - **✅ WebSocket Application Gate** - Requires TCP 443, TLS SNI, and HTTP `101 Switching Protocols`
-- **📊 Dynamic Threshold Calculation** - Adapts search criteria based on current network conditions
+- **🚀 Speed-First Ranking** - WebSocket `101` is the availability gate; all passing candidates are download-tested and ranked by speed
 - **🔒 Safe DNS Updates** - Zero-downtime updates with rollback protection
 - **🐳 Full Docker Support** - Works with both docker-compose and docker run
 - **🎯 Single-IP by Default** - Avoids clients randomly selecting an application-incompatible record
@@ -87,8 +87,11 @@ healthcheck_cron=15,45 * * * *
 1. **Existing-IP Gate** - Rechecks current DNS IPs against the real WebSocket Host/path
 2. **Latency Discovery** - Finds low-latency candidates without download testing
 3. **Application Gate** - Rejects every candidate that does not return HTTP 101
-4. **Performance Test** - Download-tests only the business-valid pool
-5. **Safe Update** - Adds the selected IP before removing rejected or obsolete records
+4. **Performance Test** - Download-tests every candidate in the business-valid pool
+5. **Speed-First Selection** - Sorts by download speed, then latency and handshake score
+6. **Safe Update** - Adds the selected IP before removing rejected or obsolete records
+
+HTTP `101` proves that the configured Host/path is accepted, but it is only a handshake and does not itself measure VLESS/Xray payload throughput.
 
 ## 📝 Example Logs
 

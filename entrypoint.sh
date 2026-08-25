@@ -2,7 +2,7 @@
 
 set -u
 
-echo "Cloudflare SpeedTest DDNS ${APP_VERSION:-2.0.0}"
+echo "Cloudflare SpeedTest DDNS ${APP_VERSION:-2.1.0}"
 
 DEFAULT_VERSION="v2.3.5"
 FALLBACK_VERSION="v2.3.5"

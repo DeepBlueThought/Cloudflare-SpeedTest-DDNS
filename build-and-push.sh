@@ -30,8 +30,8 @@ if [ -z "$DOCKER_USERNAME" ]; then
 fi
 
 # 询问版本号
-read -p "请输入版本号 (默认: 2.0.0): " VERSION
-VERSION=${VERSION:-2.0.0}
+read -p "请输入版本号 (默认: 2.1.0): " VERSION
+VERSION=${VERSION:-2.1.0}
 VERSION=${VERSION#v}
 
 # 镜像名称

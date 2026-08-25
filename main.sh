@@ -427,12 +427,14 @@ if [[ "$probe_enabled" == true ]]; then
   log_msg "INFO" "Business prefilter: $passed_count of $tested_count candidate(s) passed all TCP/TLS/WS stages"
 
   if [[ $passed_count -gt 0 ]]; then
-    print "Stage 2/2: performance-testing only business-valid candidates..."
+    print "Stage 2/2: performance-testing all $passed_count business-valid candidate(s)..."
     speed_args=("${final_args[@]}")
     for value_flag in -f -ip; do
       remove_value_arg "$value_flag" "${speed_args[@]}"
       speed_args=("${MODIFIED_ARGS[@]}")
     done
+    replace_value_arg -dn "$passed_count" "${speed_args[@]}"
+    speed_args=("${MODIFIED_ARGS[@]}")
     speed_args+=( -f business_valid_ips.txt )
     "$CloudflareST" "${speed_args[@]}" >> speedtest.log 2>&1 \
       || log_msg "WARN" "Business-valid candidate speed test did not complete successfully"
@@ -491,20 +493,16 @@ if [[ ${#ip_metrics[@]} -eq 0 ]]; then
 fi
 
 declare -a sorted_ips=()
-while IFS='|' read -r score lat spd ip; do
+while IFS='|' read -r spd lat score ip; do
   [[ -n "$ip" ]] && sorted_ips+=("$ip")
 done < <(
   for ip in "${!ip_metrics[@]}"; do
     metrics=${ip_metrics[$ip]}
     lat=${metrics%%,*}
     spd=${metrics#*,}
-    if [[ "$probe_enabled" == true ]]; then
-      score=${business_scores[$ip]:-999999}
-    else
-      score=$(awk -v latency="$lat" -v speed="$spd" 'BEGIN { printf "%.4f", latency * 1000 - speed }')
-    fi
-    printf '%s|%s|%s|%s\n' "$score" "$lat" "$spd" "$ip"
-  done | sort -t '|' -k1,1n -k2,2n -k3,3nr
+    score=${business_scores[$ip]:-999999}
+    printf '%s|%s|%s|%s\n' "$spd" "$lat" "$score" "$ip"
+  done | sort -t '|' -k1,1nr -k2,2n -k3,3n
 )
 
 declare -a target_ips=()

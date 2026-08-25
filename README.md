@@ -6,7 +6,7 @@
 
 An intelligent DDNS update tool powered by [CloudflareSpeedTest](https://github.com/XIU2/CloudflareSpeedTest).
 
-Current image release: `2.0.0` (`deepbluethought/cloudflarespeedtestddns:2.0.0`)
+Current image release: `2.1.0` (`deepbluethought/cloudflarespeedtestddns:2.1.0`)
 
 ## ✨ Core Features
 
@@ -19,7 +19,7 @@ Current image release: `2.0.0` (`deepbluethought/cloudflarespeedtestddns:2.0.0`)
 ### 🧠 Intelligent IP Pool Management
 - **Full Testing of Existing DNS Records**: Baseline test all existing IPs
 - **Best N from N Strategy**: Intelligently select the best N IPs from both old and new (N = host_ip_max)
-- **Application-First Ranking**: Rank only passing IPs by TCP/TLS/WS handshake time, then latency and speed
+- **Speed-First Ranking**: HTTP `101` is a hard gate; every passing candidate is download-tested and ranked by speed, then latency and handshake time
 - **Keep Healthy IPs**: Retain existing IPs only while they still pass the real application probe
 
 ### 📊 Dynamic Threshold Calculation
@@ -181,7 +181,7 @@ docker run -d \
   -e speedtest_para="-n 1000 -dn 2 -sl 5 -tl 100 -url https://download.parallels.com/desktop/v18/18.1.1-53328/ParallelsDesktop-18.1.1-53328.dmg" \
   `# CloudflareSpeedTest parameters:` \
   `#   -n 1000    : Latency test threads (max 1000, higher for better performance)` \
-  `#   -dn 2      : Download test count (stops after finding 2 qualifying IPs)` \
+  `#   -dn 2      : Ordinary-mode download count; WS mode tests every passing candidate` \
   `#   -sl 5      : Minimum speed threshold 5 MB/s (dynamically adjusted)` \
   `#   -tl 100    : Maximum latency threshold 100 ms (dynamically adjusted)` \
   `#   -url       : Speed test file URL (recommend large file via Cloudflare CDN)` \
@@ -273,7 +273,7 @@ services:
 ### speedtest_para Parameters
 
 - `-n`: Latency test threads; more threads = faster testing, but don't set too high on weak devices (routers); default 200, max 1000
-- `-dn`: Download test count; number of IPs to test from lowest latency; default 10. When `-sl` parameter is configured, download testing stops when the number of IPs meeting the download speed threshold reaches the `-dn` value. **Recommended: 2**
+- `-dn`: Download test count. When WebSocket probing is enabled, the program overrides this for stage 2 so every business-valid candidate is download-tested.
 - `-sl`: Minimum speed threshold in MB/s (uses the slowest business-valid current record, or 1 MB/s without a baseline)
 - `-tl`: Maximum latency threshold in ms (uses the slowest business-valid current record, with a 20 ms floor and 100 ms fallback)
 
@@ -284,12 +284,14 @@ services:
 1. Fetch current DNS A records and recheck each old IP using the real `ws_probe_host` and `ws_probe_path`.
 2. Run CloudflareST in latency-only mode (`-dd`) and take the first `ws_probe_candidate_limit` results.
 3. Run TCP 443, TLS SNI, and WebSocket Upgrade checks in order; only HTTP `101` enters the usable pool.
-4. Run CloudflareST download testing only against that usable pool.
-5. Rank passing IPs by `TCP×0.3 + TLS×0.2 + WS×0.5`; latency and download speed provide later tie-breaking.
+4. Run CloudflareSpeedTest download testing against every IP in that usable pool.
+5. Rank by download speed descending, then latency and WebSocket handshake score. Availability remains a hard gate and cannot be compensated by speed.
 6. Ensure replacement records exist before deleting obsolete records. If an add fails, old records are retained.
 7. The watchdog periodically checks only current DNS IPs and launches a full reselection if any stops returning `101`.
 
 > `host_name` is the DDNS record being written. `ws_probe_host` is the actual Cloudflare application Host/SNI. They may differ, so the program does not guess this mapping.
+
+> HTTP `101` measures WebSocket handshake availability, not VLESS/Xray payload throughput. This project does not bundle or run Xray; download speed remains the closest in-scope performance metric after the real-business gate.
 
 **Note:**
 CloudflareSpeedTest tool workflow:

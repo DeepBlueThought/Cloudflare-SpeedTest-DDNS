@@ -1,6 +1,6 @@
 FROM alpine:3.19.1
 
-ARG APP_VERSION=2.0.0
+ARG APP_VERSION=2.1.0
 
 # OCI 标签 - 提供镜像元数据
 LABEL org.opencontainers.image.title="Cloudflare SpeedTest DDNS"

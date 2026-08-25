@@ -72,7 +72,11 @@ if [[ -n "$resolve" ]]; then
     : > "$output_file"
   fi
   printf 'HTTP/1.1 %s Mock\r\n\r\n' "$code" > "$headers_file"
-  printf '%s\t0.010\t0.030\t0.080' "$code"
+  if [[ "$ip" == "104.16.2.2" ]]; then
+    printf '%s\t0.020\t0.200\t0.500' "$code"
+  else
+    printf '%s\t0.010\t0.030\t0.080' "$code"
+  fi
   [[ "$code" == 101 ]] && exit 28
   exit 0
 fi
@@ -108,6 +112,7 @@ set -u
 
 output=result.csv
 input_file=""
+download_count=""
 args=("$@")
 for ((i = 0; i < ${#args[@]}; i++)); do
   if [[ "${args[$i]}" == "-o" ]]; then
@@ -115,6 +120,9 @@ for ((i = 0; i < ${#args[@]}; i++)); do
   fi
   if [[ "${args[$i]}" == "-f" ]]; then
     input_file=${args[$((i + 1))]}
+  fi
+  if [[ "${args[$i]}" == "-dn" ]]; then
+    download_count=${args[$((i + 1))]}
   fi
 done
 
@@ -127,11 +135,14 @@ case "$output" in
     if [[ "${MOCK_EMPTY_DISCOVERY:-false}" != "true" ]]; then
       printf '162.159.44.212,4,4,0.00,10.00,0.00,HKG\n' >> "$output"
       printf '172.64.229.53,4,4,0.00,20.00,0.00,HKG\n' >> "$output"
+      printf '104.16.2.2,4,4,0.00,30.00,0.00,HKG\n' >> "$output"
     fi
     ;;
   result.csv)
     printf 'SPEED_INPUT %s\n' "$(tr '\n' ',' < "$input_file")" >> "$MOCK_ACTION_LOG"
+    printf 'SPEED_DN %s\n' "$download_count" >> "$MOCK_ACTION_LOG"
     printf '172.64.229.53,4,4,0.00,20.00,20.00,HKG\n' >> "$output"
+    printf '104.16.2.2,4,4,0.00,30.00,50.00,HKG\n' >> "$output"
     printf '104.16.1.1,4,4,0.00,1.00,100.00,HKG\n' >> "$output"
     ;;
 esac
@@ -146,7 +157,7 @@ zone_id=test-zone \
 api_token=test-token \
 host_name=bestip.example.com \
 host_ip_max=1 \
-speedtest_para='-n 10 -dn 2 -sl 1 -tl 100' \
+speedtest_para='-n 10 -dn 1 -sl 1 -tl 100' \
 ws_probe_enabled=true \
 ws_probe_host=www.example.com \
 ws_probe_path=/deepblue \
@@ -172,17 +183,18 @@ else
 fi
 
 if grep -q 'Selected 1 business-valid IP' "$TEST_TMP/run.out" \
-  && grep -q '#1: 172.64.229.53' "$TEST_TMP/run.out"; then
-  printf 'ok - only the WebSocket-valid IP reaches final selection\n'
+  && grep -q '#1: 104.16.2.2' "$TEST_TMP/run.out"; then
+  printf 'ok - fastest WebSocket-valid IP wins despite its slower handshake\n'
 else
-  printf 'not ok - only the WebSocket-valid IP reaches final selection\n'
+  printf 'not ok - fastest WebSocket-valid IP wins despite its slower handshake\n'
   ((failures++))
 fi
 
-if grep -q '^SPEED_INPUT 172.64.229.53,$' "$TEST_TMP/actions.log"; then
-  printf 'ok - download speed test receives only the business-valid pool\n'
+if grep -q '^SPEED_INPUT 172.64.229.53,104.16.2.2,$' "$TEST_TMP/actions.log" \
+  && grep -q '^SPEED_DN 2$' "$TEST_TMP/actions.log"; then
+  printf 'ok - download speed test covers the complete business-valid pool\n'
 else
-  printf 'not ok - download speed test receives only the business-valid pool\n'
+  printf 'not ok - download speed test covers the complete business-valid pool\n'
   ((failures++))
 fi
 
@@ -193,12 +205,12 @@ else
   ((failures++))
 fi
 
-if grep -q 'DELETE.*/record-bad' "$TEST_TMP/actions.log" \
-  && ! grep -q 'DELETE.*/record-good' "$TEST_TMP/actions.log" \
-  && ! grep -q '^POST ' "$TEST_TMP/actions.log"; then
-  printf 'ok - DNS update removes only the rejected IP\n'
+if grep -q '^POST .*104.16.2.2' "$TEST_TMP/actions.log" \
+  && grep -q 'DELETE.*/record-bad' "$TEST_TMP/actions.log" \
+  && grep -q 'DELETE.*/record-good' "$TEST_TMP/actions.log"; then
+  printf 'ok - DNS converges to the fastest business-valid IP\n'
 else
-  printf 'not ok - DNS update removes only the rejected IP\n'
+  printf 'not ok - DNS converges to the fastest business-valid IP\n'
   ((failures++))
 fi
 
